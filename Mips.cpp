@@ -9,9 +9,6 @@
 #include <map>
 using namespace std;
 
-//ifstream infile1("test.s"), infile2("test.in");
-//ofstream outfile("test.out");
-
 deque <string> text;
 const int sp = 29;
 bool dot;// data = 0, text = 1
@@ -20,9 +17,16 @@ char mem[4000000] = {0};
 int PC[6];
 int PD = 0;//present data
 int occ[2];
+int history_table[10000] = {0};
+int predictor[10000][16] = {0};
+int success[10000] = {0};
+int failure[10000] = {0};
+int rec_line[10000];
+bool TAKEN[10000];
 
 map <string, int> t_label, d_label;
 map <string, int> op_type;
+map <string, int> jump_op;
 
 string regname[] = {"ze", "at", "v0", "v1", "a0", "a1", "a2", "a3",
 "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
@@ -66,14 +70,12 @@ union LongWord
 class Register
 {
 public:
-	//int type;
 	int elem;
 	int occupied;
 	Register()
 	{
 		elem = 0;
 		occupied = 0;
-		//type = 4;
 	}
 }reg[34];
 
@@ -145,6 +147,22 @@ void AddOpType()
 	op_type["syscall"] = 8;
 }
 
+void AddJpOp()
+{
+	jump_op["beq"] = 1;
+	jump_op["bne"] = 2;
+	jump_op["bge"] = 3;
+	jump_op["ble"] = 4;
+	jump_op["bgt"] = 5;
+	jump_op["blt"] = 6;
+	jump_op["beqz"] = 7;
+	jump_op["bnez"] = 8;
+	jump_op["blez"] = 9;
+	jump_op["bgez"] = 10;
+	jump_op["bgtz"] = 11;
+	jump_op["bltz"] = 12;	
+}
+
 int num(string name)
 {
 	if(name == "ze") return 0;
@@ -189,25 +207,21 @@ void Write(int pos, int a)
 	for(int i = 0; i < 4; i++)
 		mem[pos + i] = Word(a).c[i];
 }
-
 void Write(int pos, unsigned int a)
 {
 	for(int i = 0; i < 4; i++)
 		mem[pos + i] = Word(a).c[i];
 }
-
 void Write(int pos, unsigned short a)
 {
 	for(int i = 0; i < 2; i++)
 		mem[pos + i] = HalfWord(a).c[i];
 }
-
 void Write(int pos, short a)
 {
 	for(int i = 0; i < 2; i++)
 		mem[pos + i] = HalfWord(a).c[i];
 }
-
 void Write(int pos, char a)
 {
 	mem[pos] = a;
@@ -216,31 +230,22 @@ void Write(int pos, char a)
 void WR(int r, int a)
 {
 	reg[r].elem = a;
-	//reg[r].type = 4;
 }
-
 void WR(int r, unsigned int a)
 {
 	reg[r].elem = a;
-	//reg[r].type = -4;
 }
-
 void WR(int r, unsigned short a)
 {
 	reg[r].elem = a;
-	//reg[r].type = -2;
 }
-
 void WR(int r, short a)
 {
 	reg[r].elem = a;
-	//reg[r].type = 2;
 }
-
 void WR(int r, char a)
 {
 	reg[r].elem = a;
-	//reg[r].type = 1;
 }
 
 class I;
@@ -397,7 +402,7 @@ public:
 					lab = str.substr(i + 2, len - i - 2);
 					tarline = t_label[lab];
 				}
-				break;
+				return 11;
 			}
 			case 4 :
 			{
@@ -407,7 +412,7 @@ public:
 				n1 = reg[num(R1)].elem;
 				lab = str.substr(opl + 6, len - opl - 6);
 				tarline = t_label[lab];
-				break;
+				return 11;
 			}
 			case 5 :
 			{
@@ -415,7 +420,7 @@ public:
 				if(reg[num(R1)].occupied)
 					return 0;
 				tarline = reg[num(R1)].elem;
-				break;
+				return 12;
 			} 
 			case 6 :
 			{
@@ -493,7 +498,7 @@ public:
 			{
 				lab = str.substr(opl + 1, len - opl - 1);
 				tarline = t_label[lab];	
-				break;
+				return 12;
 			}
 		}
 		return 1;
@@ -636,9 +641,6 @@ public:
 				case 1:	cout << n2; break;
 				case 4:	
 				{
-					//cerr << "MEM:\n";
-					//for(int i = 0; i < PD; i++)
-					//	cerr << mem[i] << endl;
 					int now = (int)n2;
 					while(mem[now] != 0)
 						cout << mem[now++];
@@ -676,18 +678,14 @@ public:
 						mem[PD++] = 0;
 					break;
 				}
-				case 10:
-					//for(int i = 0; i < PD; i++)
-					//	cout << (int)mem[i] << endl;
-					return 10;
-				case 17:
-					//for(int i = 0; i < PD; i++)
-					//	cout << (int)mem[i] << endl;
-					return 17;
+				case 10:	return 10;
+				case 17:	return 17;
 			}
 		}
 		if(jump)
 			return -500;
+		else if((op_type[op] == 3 || op_type[op] == 4) && !jump)
+			return -600;
 		return 1;
 	}
 }Ex;
@@ -818,14 +816,14 @@ public:
 		else if(op == "tdiv")	{WR(32, (int)anslo);	WR(33, (int)anshi); reg[32].occupied--; reg[33].occupied--;}
 		else if(op == "tdivu")	{WR(32, (unsigned int)anslo);	WR(33, (unsigned int)anshi); reg[32].occupied--; reg[33].occupied--;}
 		else if(op == "li")	{WR(RtNum, (int)ans); reg[RtNum].occupied--;}
-		else if(op == "la")	{WR(RtNum, w); reg[RtNum].occupied--;}	//reg[RtNum].type = regtype;}
-		else if(op == "lb")	{WR(RtNum, c); reg[RtNum].occupied--;}//	reg[RtNum].type = regtype;}
-		else if(op == "lh")	{WR(RtNum, h); reg[RtNum].occupied--;}//	reg[RtNum].type = regtype;}
-		else if(op == "lw")	{WR(RtNum, w); reg[RtNum].occupied--;}//	reg[RtNum].type = regtype;}
+		else if(op == "la")	{WR(RtNum, w); reg[RtNum].occupied--;}
+		else if(op == "lb")	{WR(RtNum, c); reg[RtNum].occupied--;}
+		else if(op == "lh")	{WR(RtNum, h); reg[RtNum].occupied--;}
+		else if(op == "lw")	{WR(RtNum, w); reg[RtNum].occupied--;}
 		else if(op == "sb")	{;}
 		else if(op == "sh")	{;}
 		else if(op == "sw")	{;}
-		else if(op == "move")	{WR(RtNum, (int)ans); reg[RtNum].occupied--;}//	reg[RtNum].type = reg[R2Num].type;}
+		else if(op == "move")	{WR(RtNum, (int)ans); reg[RtNum].occupied--;}
 		else if(op == "mfhi")	{WR(RtNum, (int)ans); reg[RtNum].occupied--;}
 		else if(op == "mflo")	{WR(RtNum, (int)ans); reg[RtNum].occupied--;}
 		else if(op == "syscall")
@@ -834,18 +832,16 @@ public:
 				WR(2, (int)ans);
 				reg[2].occupied--;
 			}
-		//PC[0]++;
 		return 1;
 	}
 }WB;
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	ifstream infile1(argv[1]);
 	AddOpType(); 
+	AddJpOp();
 	reg[29].elem = mem_size;
-	//freopen("test.s", "r", stdin);
-	//freopen("copy.s", "w", stdout);
 	string input;
 	while(!infile1.eof())
 	{
@@ -891,12 +887,10 @@ int main(int argc, char *argv[])
 				else if(input.substr(0, 7) == ".asciiz")
 				{
 					string ss = input.substr(9, len - 10);
-					//cerr << "string! " << ss << endl;
 					for(int i = 0; i < len - 10; i++)
 					{
 						if(ss[i] == '\\')
 						{
-							//cerr << "HERE" << endl;
 							if(ss[i + 1] == 'n')
 								mem[PD++] = '\n'; 
 							else if(ss[i + 1] == 't')
@@ -1025,15 +1019,8 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
-	//for(int i = 0; i < text.size(); i++)
-	//	outfile << i << "\t" << text[i] << endl;
 	PC[0] = t_label["main"];
 	PC[1] = PC[2] = PC[3] = PC[4] = PC[5] = -1;
-	/*cout << "MEM:\n";
-	for(int i = 0; i < PD; i++)
-		cout << i << '\t' << (int)mem[i] << endl;
-	cout << "---OVER\n";
-	cout << mem[4] << endl;*/
 	int status[6];// 0 未操作	1 已操作	2空线程 
 	bool loaded[6];
 	for(int i = 0; i <= 5; i++)
@@ -1041,19 +1028,9 @@ int main(int argc, char *argv[])
 		status[i] = 2;
 		loaded[i] = 1;
 	}
-	const int text_size = text.size();
+	int text_size = text.size();
 	while(true)
 	{
-		/*
-		cout << "MEM:\n";
-		for(int i = 0; i < PD; i++)
-			cout << i << '\t' << (int)mem[i] << endl;
-		cout << "---\nREG:\n";*/
-		//for(int i = 0; i < 34; i++)
-		//	cout << "reg " << i << " = " << reg[i].elem << endl;
-		//cout << "---OVER\n";
-		//cerr << PC[0] << endl;
-		//system("pause");
 		if(PC[4] != -1 && status[4] == 1 && status[5] >= 1)
 		{
 			WB.GetInfo(MA.op, MA.RtNum, MA.R1Num, MA.R2Num, MA.ans, MA.anslo, MA.anshi, MA.anssys, MA.tarline, MA.tarmem, MA.w, MA.h, MA.c, MA.jump, MA.regtype, MA.nextline);
@@ -1140,7 +1117,33 @@ int main(int argc, char *argv[])
 		if(status[2] == 0)
 		{
 			tmp = IDnDP.DoOp();
-			status[2] = tmp == 1 ? 1 : 0;
+			if(tmp == 12)
+			{
+				PC[0] = IDnDP.tarline;
+				IF.GetInfo(PC[0]);
+				status[1] = 0;
+				PC[1] = PC[0];
+				loaded[1] = 0;
+				PC[0]++;
+			}
+			else if(tmp == 11)
+			{
+				int jp_type = PC[2];	
+				if(predictor[jp_type][history_table[jp_type]] >= 1)
+				{
+					TAKEN[jp_type] = 1;
+					rec_line[jp_type] = PC[1];
+					PC[0] = IDnDP.tarline;
+					IF.GetInfo(PC[0]);
+					status[1] = 0;
+					PC[1] = PC[0];
+					loaded[1] = 0;
+					PC[0]++;	
+				}
+				else
+					TAKEN[jp_type] = 0;
+			}
+			status[2] = tmp >= 1 ? 1 : 0;
 		}
 		if(status[3] == 0)
 		{
@@ -1149,18 +1152,89 @@ int main(int argc, char *argv[])
 			{
 				case 0 : status[3] = 0; break;
 				case 1 : status[3] = 1; break;
-				case 10 : MA.DoOp(); WB.DoOp();	WB.GetInfo(MA.op, MA.RtNum, MA.R1Num, MA.R2Num, MA.ans, MA.anslo, MA.anshi, MA.anssys, MA.tarline, MA.tarmem, MA.w, MA.h, MA.c, MA.jump, MA.regtype, MA.nextline); WB.DoOp(); exit(0);
-				case 17 : MA.DoOp(); WB.DoOp();	WB.GetInfo(MA.op, MA.RtNum, MA.R1Num, MA.R2Num, MA.ans, MA.anslo, MA.anshi, MA.anssys, MA.tarline, MA.tarmem, MA.w, MA.h, MA.c, MA.jump, MA.regtype, MA.nextline); WB.DoOp(); exit(Ex.n2);
+				case 10 : 
+					MA.DoOp(); 
+					WB.DoOp();	
+					WB.GetInfo(MA.op, MA.RtNum, MA.R1Num, MA.R2Num, MA.ans, MA.anslo, MA.anshi, MA.anssys, MA.tarline, MA.tarmem, MA.w, MA.h, MA.c, MA.jump, MA.regtype, MA.nextline); 
+					WB.DoOp(); 
+					/*for(int i = 0; i < 10000;i++)
+					{
+						if(success[i] + failure[i] > 0)
+							cout << "jump_type = " << i << ", success = " << success[i] << ", failure = " << failure[i] << ", Ratio = " << (double)success[i] / (success[i] + failure[i]) << endl;
+					}*/
+					exit(0);
+				case 17 : 
+					MA.DoOp(); 
+					WB.DoOp();	
+					WB.GetInfo(MA.op, MA.RtNum, MA.R1Num, MA.R2Num, MA.ans, MA.anslo, MA.anshi, MA.anssys, MA.tarline, MA.tarmem, MA.w, MA.h, MA.c, MA.jump, MA.regtype, MA.nextline); 
+					WB.DoOp(); 
+					/*for(int i = 0; i < 10000;i++)
+					{
+						if(success[i] + failure[i] > 0)
+							cout << "jump_type = " << i << ", success = " << success[i] << ", failure = " << failure[i] << ", Ratio = " << (double)success[i] / (success[i] + failure[i]) << endl;
+					}*/
+					exit(Ex.n2);
 				case -500 : 
-					status[1] = status[2] = 2;
-					loaded[1] = loaded[2] = 1;
 					status[3] = 1;
-					if(occ[0] != -1)
-						reg[occ[0]].occupied--;
-					if(occ[1] != -1)
-						reg[occ[1]].occupied--;
-					PC[1] = PC[2] = -1;
-					PC[0] = Ex.tarline;
+					if(op_type[Ex.op] == 3 || op_type[Ex.op] == 4)
+					{
+						int jump_type = PC[3];
+						if(TAKEN[jump_type])
+						{
+							predictor[jump_type][history_table[jump_type]] = min(predictor[jump_type][history_table[jump_type]] + 1, 2);
+							history_table[jump_type] <<= 1;
+							history_table[jump_type] %= 16;
+							history_table[jump_type]++;
+							success[jump_type]++;
+						}
+						else
+						{
+							status[1] = status[2] = 2;
+							loaded[1] = loaded[2] = 1;
+							status[3] = 1;
+							if(occ[0] != -1)
+								reg[occ[0]].occupied--;
+							if(occ[1] != -1)
+								reg[occ[1]].occupied--;
+							PC[1] = PC[2] = -1;
+							PC[0] = Ex.tarline;
+							predictor[jump_type][history_table[jump_type]] = min(predictor[jump_type][history_table[jump_type]] + 1, 2);	
+							history_table[jump_type] <<= 1;
+							history_table[jump_type] %= 16;
+							history_table[jump_type]++;
+							failure[jump_type]++;
+						}
+					}
+					break;
+				case -600 :
+					status[3] = 1;
+					if(op_type[Ex.op] == 3 || op_type[Ex.op] == 4)
+					{
+						int jump_type = PC[3];
+						if(!TAKEN[jump_type])
+						{
+							predictor[jump_type][history_table[jump_type]] = max(predictor[jump_type][history_table[jump_type]] - 1, -1);
+							history_table[jump_type] <<= 1;
+							history_table[jump_type] %= 16;
+							success[jump_type]++;
+						}
+						else
+						{
+							status[1] = status[2] = 2;
+							loaded[1] = loaded[2] = 1;
+							status[3] = 1;
+							if(occ[0] != -1)
+								reg[occ[0]].occupied--;
+							if(occ[1] != -1)
+								reg[occ[1]].occupied--;
+							PC[1] = PC[2] = -1;
+							PC[0] = rec_line[jump_type];	
+							predictor[jump_type][history_table[jump_type]] = max(predictor[jump_type][history_table[jump_type]] -1, -1);
+							history_table[jump_type] <<= 1;
+							history_table[jump_type] %= 16;
+							failure[jump_type]++;
+						}
+					}
 					break;
 			}
 		}
